@@ -4,12 +4,12 @@
 //! https://github.com/zed-industries/zed/blob/main/crates/gpui/examples/input.rs
 use anyhow::Result;
 use gpui::{
-    Action, App, AppContext, Bounds, ClipboardItem, Context, Entity, EntityInputHandler,
-    EventEmitter, FocusHandle, Focusable, InteractiveElement as _, IntoElement, KeyBinding,
-    KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement as _,
-    Pixels, Point, Render, ScrollHandle, ScrollWheelEvent, ShapedLine, SharedString, Styled as _,
-    Subscription, Task, UTF16Selection, Window, actions, div, point, prelude::FluentBuilder as _,
-    px,
+    actions, div, point, prelude::FluentBuilder as _, px, Action, App, AppContext, Bounds,
+    ClipboardItem, Context, Entity, EntityInputHandler, EventEmitter, FocusHandle, Focusable,
+    InteractiveElement as _, IntoElement, KeyBinding, KeyDownEvent, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, ParentElement as _, Pixels, Point, Render, ScrollHandle,
+    ScrollWheelEvent, ShapedLine, SharedString, Styled as _, Subscription, Task, UTF16Selection,
+    Window,
 };
 use gpui::{Half, TextAlign};
 use ropey::{Rope, RopeSlice};
@@ -23,20 +23,20 @@ use super::{
     blink_cursor::BlinkCursor, change::Change, element::TextElement, mask_pattern::MaskPattern,
     mode::InputMode, number_input, text_wrapper::TextWrapper,
 };
-use crate::Size;
 use crate::actions::{SelectDown, SelectLeft, SelectRight, SelectUp};
 use crate::input::blink_cursor::CURSOR_WIDTH;
 use crate::input::movement::MoveDirection;
 use crate::input::{
-    HoverDefinition, Lsp, Position,
     element::RIGHT_MARGIN,
     popovers::{ContextMenu, DiagnosticPopover, HoverPopover, MouseContextMenu},
     search::{self, SearchPanel},
     text_wrapper::LineLayout,
+    HoverDefinition, Lsp, Position,
 };
 use crate::input::{InlineCompletion, RopeExt as _, Selection};
-use crate::{Root, history::History};
+use crate::Size;
 use crate::{highlighter::DiagnosticSet, input::text_wrapper::LineItem};
+use crate::{history::History, Root};
 
 #[derive(Action, Clone, PartialEq, Eq, Deserialize)]
 #[action(namespace = input, no_json)]
@@ -348,6 +348,9 @@ pub struct InputState {
 
     pub lsp: Lsp,
 
+    /// External search matches for highlighting (used by external find/replace panels)
+    pub external_search_matches: Option<(Rc<Vec<Range<usize>>>, usize)>,
+
     /// A flag to indicate if we have a pending update to the text.
     ///
     /// If true, will call some update (for example LSP, Syntax Highlight) before render.
@@ -433,6 +436,7 @@ impl InputState {
             mask_pattern: MaskPattern::default(),
             text_align: TextAlign::Left,
             lsp: Lsp::default(),
+            external_search_matches: None,
             diagnostic_popover: None,
             context_menu: None,
             mouse_context_menu,
@@ -495,6 +499,24 @@ impl InputState {
         debug_assert!(self.mode.is_multi_line());
         self.searchable = searchable;
         self
+    }
+
+    /// Set external search matches for highlighting
+    pub fn set_search_matches(
+        &mut self,
+        ranges: Vec<Range<usize>>,
+        current_ix: usize,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.external_search_matches = Some((Rc::new(ranges), current_ix));
+        cx.notify();
+    }
+
+    /// Clear external search matches
+    pub fn clear_search_matches(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        self.external_search_matches = None;
+        cx.notify();
     }
 
     /// Set placeholder

@@ -1,20 +1,20 @@
 use std::{ops::Range, rc::Rc};
 
 use gpui::{
-    App, Bounds, Corners, Element, ElementId, ElementInputHandler, Entity, GlobalElementId, Half,
-    HighlightStyle, Hitbox, Hsla, IntoElement, LayoutId, MouseButton, MouseMoveEvent, Path, Pixels,
-    Point, ShapedLine, SharedString, Size, Style, TextAlign, TextRun, TextStyle, UnderlineStyle,
-    Window, fill, point, px, relative, size,
+    fill, point, px, relative, size, App, Bounds, Corners, Element, ElementId, ElementInputHandler,
+    Entity, GlobalElementId, Half, HighlightStyle, Hitbox, Hsla, IntoElement, LayoutId,
+    MouseButton, MouseMoveEvent, Path, Pixels, Point, ShapedLine, SharedString, Size, Style,
+    TextAlign, TextRun, TextStyle, UnderlineStyle, Window,
 };
 use ropey::Rope;
 use smallvec::SmallVec;
 
 use crate::{
+    input::{blink_cursor::CURSOR_WIDTH, text_wrapper::LineLayout, RopeExt as _},
     ActiveTheme as _, Colorize, PixelsExt, Root,
-    input::{RopeExt as _, blink_cursor::CURSOR_WIDTH, text_wrapper::LineLayout},
 };
 
-use super::{InputState, LastLayout, WhitespaceIndicators, mode::InputMode};
+use super::{mode::InputMode, InputState, LastLayout, WhitespaceIndicators};
 
 const BOTTOM_MARGIN_ROWS: usize = 3;
 pub(super) const RIGHT_MARGIN: Pixels = px(10.);
@@ -397,13 +397,18 @@ impl TextElement {
         cx: &mut App,
     ) -> Vec<(Path<Pixels>, bool)> {
         let search_panel = self.state.read(cx).search_panel.clone();
-        let Some((ranges, current_match_ix)) = search_panel.and_then(|panel| {
-            if let Some(matcher) = panel.read(cx).matcher() {
-                Some((matcher.matched_ranges.clone(), matcher.current_match_ix))
-            } else {
-                None
-            }
-        }) else {
+        let external = self.state.read(cx).external_search_matches.clone();
+
+        let Some((ranges, current_match_ix)) = search_panel
+            .and_then(|panel| {
+                if let Some(matcher) = panel.read(cx).matcher() {
+                    Some((matcher.matched_ranges.clone(), matcher.current_match_ix))
+                } else {
+                    None
+                }
+            })
+            .or(external)
+        else {
             return vec![];
         };
 
