@@ -2,13 +2,13 @@ use crate::actions::{Cancel, Confirm, SelectDown, SelectUp};
 use crate::actions::{SelectLeft, SelectRight};
 use crate::menu::menu_item::MenuItemElement;
 use crate::scroll::ScrollableElement;
-use crate::{ActiveTheme, ElementExt, Icon, IconName, Sizable as _, h_flex, v_flex};
-use crate::{Side, Size, StyledExt, kbd::Kbd};
+use crate::{h_flex, v_flex, ActiveTheme, ElementExt, Icon, IconName, Sizable as _};
+use crate::{kbd::Kbd, Side, Size, StyledExt};
 use gpui::{
-    Action, AnyElement, App, AppContext, Bounds, Context, Corner, DismissEvent, Edges, Entity,
-    EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement, KeyBinding,
-    ParentElement, Pixels, Render, ScrollHandle, SharedString, StatefulInteractiveElement, Styled,
-    WeakEntity, Window, anchored, div, prelude::FluentBuilder, px, rems,
+    anchored, div, prelude::FluentBuilder, px, rems, Action, AnyElement, App, AppContext, Bounds,
+    Context, Corner, DismissEvent, Edges, Entity, EventEmitter, FocusHandle, Focusable,
+    InteractiveElement, IntoElement, KeyBinding, ParentElement, Pixels, Render, ScrollHandle,
+    SharedString, StatefulInteractiveElement, Styled, WeakEntity, Window,
 };
 use gpui::{ClickEvent, Half, MouseDownEvent, OwnedMenuItem, Point, Subscription};
 use std::rc::Rc;
@@ -636,6 +636,15 @@ impl PopupMenu {
     pub fn item(mut self, item: impl Into<PopupMenuItem>) -> Self {
         let item: PopupMenuItem = item.into();
         self.menu_items.push(item);
+        self
+    }
+
+    /// Add multiple menu items from an iterator.
+    pub fn items<I>(mut self, items: I) -> Self
+    where
+        I: IntoIterator<Item = PopupMenuItem>,
+    {
+        self.menu_items.extend(items);
         self
     }
 
