@@ -122,6 +122,10 @@ impl ThemeRegistry {
         &self.themes
     }
 
+    pub fn themes_mut(&mut self) -> &mut HashMap<SharedString, Rc<ThemeConfig>> {
+        &mut self.themes
+    }
+
     /// Returns a sorted list of themes.
     pub fn sorted_themes(&self) -> Vec<&Rc<ThemeConfig>> {
         let mut themes = self.themes.values().collect::<Vec<_>>();

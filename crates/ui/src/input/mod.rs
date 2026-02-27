@@ -29,5 +29,9 @@ pub use otp_input::*;
 pub use state::*;
 
 pub use lsp_types::Position;
+pub use lsp_types::{
+    CompletionContext, CompletionItem, CompletionItemKind, CompletionResponse,
+    CompletionTextEdit, CompletionTriggerKind, TextEdit,
+};
 pub use rope_ext::*;
 pub use ropey::Rope;

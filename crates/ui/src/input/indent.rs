@@ -1,15 +1,15 @@
 use gpui::{
-    Bounds, Context, EntityInputHandler as _, Hsla, Path, PathBuilder, Pixels, SharedString,
-    TextRun, TextStyle, Window, point, px,
+    point, px, Bounds, Context, EntityInputHandler as _, Hsla, Path, PathBuilder, Pixels,
+    SharedString, TextRun, TextStyle, Window,
 };
 use ropey::RopeSlice;
 
 use crate::{
-    RopeExt,
     input::{
-        Indent, IndentInline, InputState, LastLayout, Outdent, OutdentInline, element::TextElement,
-        mode::InputMode,
+        element::TextElement, mode::InputMode, Indent, IndentInline, InputState, LastLayout,
+        Outdent, OutdentInline,
     },
+    RopeExt,
 };
 
 #[derive(Debug, Copy, Clone)]
@@ -214,6 +214,18 @@ impl InputState {
             _ => {}
         }
         self
+    }
+
+    /// Set the tab size at runtime (post-creation setter).
+    ///
+    /// Only for [`InputMode::PlainText`] and [`InputMode::CodeEditor`] mode.
+    pub fn set_tab_size(&mut self, tab: TabSize, _: &mut Window, cx: &mut Context<Self>) {
+        match &mut self.mode {
+            InputMode::PlainText { tab: t, .. } => *t = tab,
+            InputMode::CodeEditor { tab: t, .. } => *t = tab,
+            _ => {}
+        }
+        cx.notify();
     }
 
     pub(super) fn indent_inline(

@@ -1,8 +1,8 @@
 use crate::{ActiveTheme, Sizable, Size};
 use gpui::{
-    AnyElement, App, AppContext, Context, Entity, Hsla, IntoElement, Radians, Render, RenderOnce,
-    SharedString, StyleRefinement, Styled, Svg, Transformation, Window,
-    prelude::FluentBuilder as _, svg,
+    prelude::FluentBuilder as _, svg, AnyElement, App, AppContext, Context, Entity, Hsla,
+    IntoElement, Radians, Render, RenderOnce, SharedString, StyleRefinement, Styled, Svg,
+    Transformation, Window,
 };
 
 /// Types implementing this trait can automatically be converted to [`Icon`].
@@ -37,6 +37,7 @@ pub enum IconName {
     BatteryWarning,
     Bell,
     BookOpen,
+    Bookmark,
     Bot,
     Building2,
     Calendar,
@@ -148,6 +149,7 @@ impl IconNamed for IconName {
             Self::BatteryWarning => "icons/battery-warning.svg",
             Self::Bell => "icons/bell.svg",
             Self::BookOpen => "icons/book-open.svg",
+            Self::Bookmark => "icons/bookmark.svg",
             Self::Bot => "icons/bot.svg",
             Self::Building2 => "icons/building-2.svg",
             Self::Calendar => "icons/calendar.svg",

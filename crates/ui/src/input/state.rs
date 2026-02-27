@@ -5,7 +5,7 @@
 use anyhow::Result;
 use gpui::{
     actions, div, point, prelude::FluentBuilder as _, px, Action, App, AppContext, Bounds,
-    ClipboardItem, Context, Entity, EntityInputHandler, EventEmitter, FocusHandle, Focusable,
+    ClipboardItem, Context, Entity, EntityInputHandler, EventEmitter, FocusHandle, Focusable, Hsla,
     InteractiveElement as _, IntoElement, KeyBinding, KeyDownEvent, MouseButton, MouseDownEvent,
     MouseMoveEvent, MouseUpEvent, ParentElement as _, Pixels, Point, Render, ScrollHandle,
     ScrollWheelEvent, ShapedLine, SharedString, Styled as _, Subscription, Task, UTF16Selection,
@@ -98,6 +98,8 @@ pub enum InputEvent {
     PressEnter { secondary: bool },
     Focus,
     Blur,
+    Copy(String),
+    Cut(String),
 }
 
 pub(super) const CONTEXT: &str = "Input";
@@ -249,6 +251,10 @@ pub(super) struct LastLayout {
     pub(super) visible_range_offset: Range<usize>,
     /// The last layout lines (Only have visible lines).
     pub(super) lines: Rc<Vec<LineLayout>>,
+    /// Maps display index → real document line number (accounts for folded lines).
+    pub(super) visible_line_map: Vec<usize>,
+    /// Maps display index → document byte offset at start of that line.
+    pub(super) visible_line_offsets: Vec<usize>,
     /// The line_height of text layout, this will change will InputElement painted.
     pub(super) line_height: Pixels,
     /// The wrap width of text layout, this will change will InputElement painted.
@@ -270,11 +276,22 @@ impl LastLayout {
     ///
     /// Returns None if the row is out of range.
     pub(crate) fn line(&self, row: usize) -> Option<&LineLayout> {
-        if row < self.visible_range.start || row >= self.visible_range.end {
-            return None;
+        if !self.visible_line_map.is_empty() {
+            let display_ix = self.visible_line_map.iter().position(|&r| r == row)?;
+            self.lines.get(display_ix)
+        } else {
+            if row < self.visible_range.start || row >= self.visible_range.end {
+                return None;
+            }
+            self.lines.get(row.saturating_sub(self.visible_range.start))
         }
+    }
 
-        self.lines.get(row.saturating_sub(self.visible_range.start))
+    pub(super) fn real_line_for_display_ix(&self, display_ix: usize) -> usize {
+        self.visible_line_map
+            .get(display_ix)
+            .copied()
+            .unwrap_or(self.visible_range.start + display_ix)
     }
 
     /// Get the alignment offset for the given line width.
@@ -351,6 +368,10 @@ pub struct InputState {
     /// External search matches for highlighting (used by external find/replace panels)
     pub external_search_matches: Option<(Rc<Vec<Range<usize>>>, usize)>,
 
+    /// External persistent mark ranges for highlight marking (used by Mark feature)
+    /// Each entry is (ranges, color) — multiple mark styles with different colors
+    pub external_mark_ranges: Vec<(Rc<Vec<Range<usize>>>, Hsla)>,
+
     /// A flag to indicate if we have a pending update to the text.
     ///
     /// If true, will call some update (for example LSP, Syntax Highlight) before render.
@@ -367,6 +388,16 @@ pub struct InputState {
 
     pub(super) _context_menu_task: Task<Result<()>>,
     pub(super) inline_completion: InlineCompletion,
+    pub(super) auto_pairs: bool,
+
+    /// Foldable line ranges (0-based). Each range is `start_line..end_line` where
+    /// start_line is the line with the fold indicator and end_line is the last line of
+    /// the foldable region (inclusive). Set externally via tree-sitter analysis.
+    pub foldable_ranges: Vec<Range<usize>>,
+    /// Currently folded line ranges (0-based). Each range is `start_line..end_line` where
+    /// start_line is the first HIDDEN line (the line after the fold indicator) and
+    /// end_line is the last hidden line (inclusive). Lines in these ranges are not rendered.
+    pub folded_ranges: Vec<Range<usize>>,
 }
 
 impl EventEmitter<InputEvent> for InputState {}
@@ -437,6 +468,7 @@ impl InputState {
             text_align: TextAlign::Left,
             lsp: Lsp::default(),
             external_search_matches: None,
+            external_mark_ranges: Vec::new(),
             diagnostic_popover: None,
             context_menu: None,
             mouse_context_menu,
@@ -449,6 +481,9 @@ impl InputState {
             _context_menu_task: Task::ready(Ok(())),
             _pending_update: false,
             inline_completion: InlineCompletion::default(),
+            auto_pairs: false,
+            foldable_ranges: Vec::new(),
+            folded_ranges: Vec::new(),
         }
     }
 
@@ -491,6 +526,7 @@ impl InputState {
         let language: SharedString = language.into();
         self.mode = InputMode::code_editor(language);
         self.searchable = true;
+        self.auto_pairs = true;
         self
     }
 
@@ -498,6 +534,11 @@ impl InputState {
     pub fn searchable(mut self, searchable: bool) -> Self {
         debug_assert!(self.mode.is_multi_line());
         self.searchable = searchable;
+        self
+    }
+
+    pub fn auto_pairs(mut self, auto_pairs: bool) -> Self {
+        self.auto_pairs = auto_pairs;
         self
     }
 
@@ -517,6 +558,142 @@ impl InputState {
     pub fn clear_search_matches(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         self.external_search_matches = None;
         cx.notify();
+    }
+
+    pub fn set_mark_ranges(
+        &mut self,
+        marks: Vec<(Vec<Range<usize>>, Hsla)>,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.external_mark_ranges = marks
+            .into_iter()
+            .map(|(ranges, color)| (Rc::new(ranges), color))
+            .collect();
+        cx.notify();
+    }
+
+    pub fn clear_mark_ranges(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        self.external_mark_ranges.clear();
+        cx.notify();
+    }
+
+    pub fn set_foldable_ranges(
+        &mut self,
+        ranges: Vec<Range<usize>>,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.foldable_ranges = ranges;
+        cx.notify();
+    }
+
+    pub fn toggle_fold_at_line(
+        &mut self,
+        line: usize,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(idx) = self.folded_ranges.iter().position(|r| r.start == line + 1) {
+            self.folded_ranges.remove(idx);
+        } else if let Some(foldable) = self.foldable_ranges.iter().find(|r| r.start == line) {
+            let hidden_start = foldable.start + 1;
+            let hidden_end = foldable.end;
+            if hidden_start <= hidden_end {
+                self.folded_ranges.push(hidden_start..hidden_end);
+                self.folded_ranges.sort_by_key(|r| r.start);
+            }
+        }
+        cx.notify();
+    }
+
+    pub fn fold_all(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        self.folded_ranges.clear();
+        for foldable in &self.foldable_ranges {
+            let hidden_start = foldable.start + 1;
+            let hidden_end = foldable.end;
+            if hidden_start <= hidden_end {
+                self.folded_ranges.push(hidden_start..hidden_end);
+            }
+        }
+        self.folded_ranges.sort_by_key(|r| r.start);
+        self.deduplicate_folded_ranges();
+        cx.notify();
+    }
+
+    pub fn unfold_all(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        self.folded_ranges.clear();
+        cx.notify();
+    }
+
+    pub fn is_line_folded(&self, line: usize) -> bool {
+        self.folded_ranges
+            .iter()
+            .any(|r| line >= r.start && line < r.end)
+    }
+
+    pub fn is_fold_header(&self, line: usize) -> bool {
+        self.foldable_ranges.iter().any(|r| r.start == line)
+    }
+
+    pub fn is_folded_header(&self, line: usize) -> bool {
+        self.folded_ranges.iter().any(|r| r.start == line + 1)
+    }
+
+    fn deduplicate_folded_ranges(&mut self) {
+        if self.folded_ranges.len() <= 1 {
+            return;
+        }
+        let mut merged: Vec<Range<usize>> = Vec::new();
+        for range in &self.folded_ranges {
+            if let Some(last) = merged.last_mut() {
+                if range.start <= last.end {
+                    last.end = last.end.max(range.end);
+                    continue;
+                }
+            }
+            merged.push(range.clone());
+        }
+        self.folded_ranges = merged;
+    }
+
+    pub fn total_folded_lines(&self) -> usize {
+        self.folded_ranges.iter().map(|r| r.end - r.start).sum()
+    }
+
+    pub fn display_line_to_real_line(&self, display_line: usize) -> usize {
+        let mut real_line = display_line;
+        for range in &self.folded_ranges {
+            if real_line >= range.start {
+                real_line += range.end - range.start;
+            } else {
+                break;
+            }
+        }
+        real_line
+    }
+
+    pub fn real_line_to_display_line(&self, real_line: usize) -> Option<usize> {
+        let mut offset = 0usize;
+        for range in &self.folded_ranges {
+            if real_line >= range.start && real_line < range.end {
+                return None;
+            }
+            if real_line >= range.end {
+                offset += range.end - range.start;
+            }
+        }
+        Some(real_line - offset)
+    }
+
+    pub fn syntax_tree(&self) -> Option<tree_sitter::Tree> {
+        match &self.mode {
+            super::mode::InputMode::CodeEditor { highlighter, .. } => {
+                let hl = highlighter.borrow();
+                hl.as_ref().and_then(|h| h.tree().cloned())
+            }
+            _ => None,
+        }
     }
 
     /// Set placeholder
@@ -871,10 +1048,37 @@ impl InputState {
         &self.text
     }
 
+    /// Return the selected text as a String. Returns empty string if no selection.
+    pub fn selected_text_string(&self) -> String {
+        if self.selected_range.is_empty() {
+            return String::new();
+        }
+        let range_utf16 = self.range_to_utf16(&self.selected_range.into());
+        let range = self.range_from_utf16(&range_utf16);
+        self.text.slice(range).to_string()
+    }
+
     /// Return the (0-based) [`Position`] of the cursor.
     pub fn cursor_position(&self) -> Position {
         let offset = self.cursor();
         self.text.offset_to_position(offset)
+    }
+
+    /// Return the current scroll offset as (x, y) in pixels.
+    /// Both values are typically <= 0 (negative means scrolled right/down).
+    pub fn scroll_offset(&self) -> Point<Pixels> {
+        self.scroll_handle.offset()
+    }
+
+    /// Return the visible line range (0-based row indices) from the last layout.
+    /// Returns None if no layout has been performed yet.
+    pub fn visible_line_range(&self) -> Option<Range<usize>> {
+        self.last_layout.as_ref().map(|l| l.visible_range.clone())
+    }
+
+    /// Return the line height from the last layout, if available.
+    pub fn line_height(&self) -> Option<Pixels> {
+        self.last_layout.as_ref().map(|l| l.line_height)
     }
 
     /// Set (0-based) [`Position`] of the cursor.
@@ -1101,7 +1305,7 @@ impl InputState {
         }
     }
 
-    pub(super) fn backspace(&mut self, _: &Backspace, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn backspace(&mut self, _: &Backspace, window: &mut Window, cx: &mut Context<Self>) {
         if self.selected_range.is_empty() {
             self.select_to(self.previous_boundary(self.cursor()), cx)
         }
@@ -1109,7 +1313,7 @@ impl InputState {
         self.pause_blink_cursor(cx);
     }
 
-    pub(super) fn delete(&mut self, _: &Delete, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn delete(&mut self, _: &Delete, window: &mut Window, cx: &mut Context<Self>) {
         if self.selected_range.is_empty() {
             self.select_to(self.next_boundary(self.cursor()), cx)
         }
@@ -1285,6 +1489,32 @@ impl InputState {
         if let Some(ime_marked_range) = &self.ime_marked_range {
             if ime_marked_range.len() == 0 {
                 self.ime_marked_range = None;
+            }
+        }
+
+        if event.button == MouseButton::Left && !self.foldable_ranges.is_empty() {
+            if let (Some(bounds), Some(last_layout)) =
+                (self.last_bounds.as_ref(), self.last_layout.as_ref())
+            {
+                let line_number_width = last_layout.line_number_width;
+                let click_x = event.position.x - bounds.origin.x;
+                if click_x >= px(0.) && click_x < line_number_width {
+                    let line_height = last_layout.line_height;
+                    let click_y = event.position.y - bounds.origin.y - last_layout.visible_top;
+                    let mut y_accum = px(0.);
+                    for (display_ix, _line) in last_layout.lines.iter().enumerate() {
+                        let row = last_layout.real_line_for_display_ix(display_ix);
+                        let line_h = _line.size(line_height).height;
+                        if click_y >= y_accum && click_y < y_accum + line_h {
+                            if self.is_fold_header(row) {
+                                self.toggle_fold_at_line(row, window, cx);
+                                return;
+                            }
+                            break;
+                        }
+                        y_accum += line_h;
+                    }
+                }
             }
         }
 
@@ -1523,7 +1753,8 @@ impl InputState {
         }
 
         let selected_text = self.text.slice(self.selected_range).to_string();
-        cx.write_to_clipboard(ClipboardItem::new_string(selected_text));
+        cx.write_to_clipboard(ClipboardItem::new_string(selected_text.clone()));
+        cx.emit(InputEvent::Copy(selected_text));
     }
 
     pub(super) fn cut(&mut self, _: &Cut, window: &mut Window, cx: &mut Context<Self>) {
@@ -1532,7 +1763,8 @@ impl InputState {
         }
 
         let selected_text = self.text.slice(self.selected_range).to_string();
-        cx.write_to_clipboard(ClipboardItem::new_string(selected_text));
+        cx.write_to_clipboard(ClipboardItem::new_string(selected_text.clone()));
+        cx.emit(InputEvent::Cut(selected_text.clone()));
 
         self.replace_text_in_range_silent(None, "", window, cx);
     }
@@ -1563,7 +1795,7 @@ impl InputState {
             .push(Change::new(range, &old_text, new_range, new_text));
     }
 
-    pub(super) fn undo(&mut self, _: &Undo, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn undo(&mut self, _: &Undo, window: &mut Window, cx: &mut Context<Self>) {
         self.history.ignore = true;
         if let Some(changes) = self.history.undo() {
             for change in changes {
@@ -1574,7 +1806,7 @@ impl InputState {
         self.history.ignore = false;
     }
 
-    pub(super) fn redo(&mut self, _: &Redo, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn redo(&mut self, _: &Redo, window: &mut Window, cx: &mut Context<Self>) {
         self.history.ignore = true;
         if let Some(changes) = self.history.redo() {
             for change in changes {
@@ -2064,6 +2296,21 @@ impl EntityInputHandler for InputState {
         self.text.replace(range.clone(), new_text);
 
         let mut new_offset = (range.start + new_text.len()).min(self.text.len());
+
+        if self.auto_pairs && new_text.len() == 1 && range.start == range.end {
+            let closing = match new_text {
+                "(" => Some(")"),
+                "[" => Some("]"),
+                "{" => Some("}"),
+                "\"" => Some("\""),
+                "'" => Some("'"),
+                "`" => Some("`"),
+                _ => None,
+            };
+            if let Some(close) = closing {
+                self.text.replace(new_offset..new_offset, close);
+            }
+        }
 
         if self.mode.is_single_line() {
             let pending_text = self.text.to_string();
