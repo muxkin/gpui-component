@@ -208,7 +208,17 @@ impl InputMode {
 
                 let mut highlighter = highlighter.borrow_mut();
                 if highlighter.is_none() {
+                    #[cfg(debug_assertions)]
+                    tracing::debug!(
+                        "[InputMode] Creating SyntaxHighlighter for language {:?}, text_len={}",
+                        language, text.len()
+                    );
                     let new_highlighter = SyntaxHighlighter::new(language);
+                    #[cfg(debug_assertions)]
+                    tracing::debug!(
+                        "[InputMode] Highlighter created for {:?}, language_name={:?}",
+                        language, new_highlighter.language_name()
+                    );
                     highlighter.replace(new_highlighter);
                 }
 

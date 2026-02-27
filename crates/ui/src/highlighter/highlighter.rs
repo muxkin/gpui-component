@@ -186,8 +186,20 @@ impl<'a> sum_tree::Dimension<'a, HighlightSummary> for Range<usize> {
 impl SyntaxHighlighter {
     /// Create a new SyntaxHighlighter for HTML.
     pub fn new(lang: &str) -> Self {
+        #[cfg(debug_assertions)]
+        tracing::debug!("[SyntaxHighlighter] Creating highlighter for language: {:?}", lang);
+
         match Self::build_combined_injections_query(&lang) {
-            Ok(result) => result,
+            Ok(result) => {
+                #[cfg(debug_assertions)]
+                tracing::debug!(
+                    "[SyntaxHighlighter] Successfully created for {:?}, query has {} patterns, captures: {:?}",
+                    lang,
+                    result.query.as_ref().map(|q| q.pattern_count()).unwrap_or(0),
+                    result.query.as_ref().map(|q| q.capture_names().to_vec()).unwrap_or_default()
+                );
+                result
+            }
             Err(err) => {
                 tracing::warn!(
                     "SyntaxHighlighter init failed for {:?}, fallback to `json`: {}",
@@ -206,11 +218,20 @@ impl SyntaxHighlighter {
     /// https://github.com/tree-sitter/tree-sitter/blob/v0.25.5/highlight/src/lib.rs#L336
     fn build_combined_injections_query(lang: &str) -> Result<Self> {
         let Some(config) = LanguageRegistry::singleton().language(&lang) else {
+            #[cfg(debug_assertions)]
+            tracing::debug!("[SyntaxHighlighter] Language {:?} NOT found in registry. Available: {:?}",
+                lang, LanguageRegistry::singleton().languages());
             return Err(anyhow!(
                 "language {:?} is not registered in `LanguageRegistry`",
                 lang
             ));
         };
+
+        #[cfg(debug_assertions)]
+        tracing::debug!(
+            "[SyntaxHighlighter] Found config for {:?}: highlights_len={}, injections_len={}, locals_len={}",
+            lang, config.highlights.len(), config.injections.len(), config.locals.len()
+        );
 
         let mut parser = Parser::new();
         parser
@@ -504,10 +525,14 @@ impl SyntaxHighlighter {
     fn match_styles(&self, range: Range<usize>) -> Vec<HighlightItem> {
         let mut highlights = vec![];
         let Some(tree) = &self.tree else {
+            #[cfg(debug_assertions)]
+            tracing::trace!("[SyntaxHighlighter] match_styles: no tree for {:?}", self.language);
             return highlights;
         };
 
         let Some(query) = &self.query else {
+            #[cfg(debug_assertions)]
+            tracing::trace!("[SyntaxHighlighter] match_styles: no query for {:?}", self.language);
             return highlights;
         };
 
@@ -620,6 +645,28 @@ impl SyntaxHighlighter {
         let start_offset = range.start;
 
         let highlights = self.match_styles(range.clone());
+
+        #[cfg(debug_assertions)]
+        {
+            static LOGGED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+            if !LOGGED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                tracing::debug!(
+                    "[SyntaxHighlighter] styles() for {:?}: {} highlight items in range {:?}, tree_exists={}, text_len={}",
+                    self.language,
+                    highlights.len(),
+                    range,
+                    self.tree.is_some(),
+                    self.text.len()
+                );
+                // Log first few highlights for debugging
+                for (i, item) in highlights.iter().take(10).enumerate() {
+                    tracing::debug!(
+                        "[SyntaxHighlighter]   highlight[{}]: {:?} = {:?}",
+                        i, item.range, item.name
+                    );
+                }
+            }
+        }
 
         // let mut iter_count = 0;
         for item in highlights {
