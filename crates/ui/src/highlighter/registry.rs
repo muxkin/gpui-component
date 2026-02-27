@@ -10,8 +10,10 @@ use std::{
 
 use crate::{
     ActiveTheme, DEFAULT_THEME_COLORS, ThemeMode,
-    highlighter::{Language, languages},
+    highlighter::languages,
 };
+#[cfg(feature = "tree-sitter-languages")]
+use crate::highlighter::Language;
 
 pub(super) const HIGHLIGHT_NAMES: [&str; 40] = [
     "attribute",
@@ -493,13 +495,22 @@ impl LanguageRegistry {
 
     /// Returns the language configuration for the given language name.
     pub fn language(&self, name: &str) -> Option<LanguageConfig> {
-        // Try to get by name first, there may have a custom language registered
-        // Then try to get built-in language to support short language names, e.g. "js" for "javascript"
         let languages = self.languages.lock().unwrap();
-        languages
-            .get(name)
-            .or_else(|| languages.get(Language::from_str(name).name()))
-            .cloned()
+
+        // Try exact name first (includes plugin-registered languages)
+        if let Some(config) = languages.get(name) {
+            return Some(config.clone());
+        }
+
+        // Only use built-in alias resolution when tree-sitter-languages feature is enabled,
+        // because without the feature, Language::from_str() always returns Json which
+        // would incorrectly map every unknown language name to the JSON config.
+        #[cfg(feature = "tree-sitter-languages")]
+        if let Some(config) = languages.get(Language::from_str(name).name()) {
+            return Some(config.clone());
+        }
+
+        None
     }
 }
 
@@ -518,9 +529,20 @@ mod tests {
         );
 
         assert!(registry.language("foo").is_some());
+        // JSON is always available as a built-in
+        assert!(registry.language("json").is_some());
+    }
+
+    #[test]
+    #[cfg(feature = "tree-sitter-languages")]
+    fn test_registry_builtin_languages() {
+        use super::LanguageRegistry;
+        let registry = LanguageRegistry::singleton();
+
         assert!(registry.language("rust").is_some());
         assert!(registry.language("rs").is_some());
         assert!(registry.language("javascript").is_some());
         assert!(registry.language("js").is_some());
     }
 }
+

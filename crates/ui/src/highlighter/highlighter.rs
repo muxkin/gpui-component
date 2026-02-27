@@ -1,6 +1,6 @@
 use crate::highlighter::{HighlightTheme, LanguageRegistry};
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{anyhow, Context, Result};
 use gpui::{HighlightStyle, SharedString};
 
 use ropey::{ChunkCursor, Rope};
@@ -190,10 +190,13 @@ impl SyntaxHighlighter {
             Ok(result) => result,
             Err(err) => {
                 tracing::warn!(
-                    "SyntaxHighlighter init failed, fallback to use `text`, {}",
+                    "SyntaxHighlighter init failed for {:?}, fallback to `json`: {}",
+                    lang,
                     err
                 );
-                Self::build_combined_injections_query("text").unwrap()
+                // Fallback to JSON which is always available (even without tree-sitter-languages)
+                Self::build_combined_injections_query("json")
+                    .expect("json language should always be registered")
             }
         }
     }
@@ -256,7 +259,11 @@ impl SyntaxHighlighter {
                         ciq.disable_pattern(pattern_index);
                     }
                 }
-                if has_combined_query { Some(ciq) } else { None }
+                if has_combined_query {
+                    Some(ciq)
+                } else {
+                    None
+                }
             } else {
                 None
             }
@@ -348,6 +355,14 @@ impl SyntaxHighlighter {
 
     pub fn is_empty(&self) -> bool {
         self.text.len() == 0
+    }
+
+    pub fn tree(&self) -> Option<&Tree> {
+        self.tree.as_ref()
+    }
+
+    pub fn language_name(&self) -> &SharedString {
+        &self.language
     }
 
     /// Highlight the given text, returning a map from byte ranges to highlight captures.
