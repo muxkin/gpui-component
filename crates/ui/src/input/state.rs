@@ -1081,6 +1081,18 @@ impl InputState {
         self.last_layout.as_ref().map(|l| l.line_height)
     }
 
+    /// Return the line number gutter width from the last layout.
+    /// Returns `Pixels::ZERO` if no layout has been performed yet or line numbers are disabled.
+    pub fn line_number_width(&self) -> Pixels {
+        self.last_layout.as_ref().map(|l| l.line_number_width).unwrap_or(Pixels::ZERO)
+    }
+
+    /// Return the input container bounds from the last layout.
+    /// Returns `None` if the input has not been laid out yet.
+    pub fn input_bounds(&self) -> Bounds<Pixels> {
+        self.input_bounds
+    }
+
     /// Set (0-based) [`Position`] of the cursor.
     ///
     /// This will move the cursor to the specified line and column, and update the selection range.
