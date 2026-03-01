@@ -1093,6 +1093,37 @@ impl InputState {
         self.input_bounds
     }
 
+    /// Return the absolute screen pixel position for the given (line, col) in 0-based document coordinates.
+    ///
+    /// Returns `None` if the layout is not available or the position is not currently visible.
+    /// The returned point is in absolute window coordinates (suitable for painting overlays).
+    pub fn pixel_position_of_line_col(&self, line: u32, col: u32) -> Option<Point<Pixels>> {
+        let _last_layout = self.last_layout.as_ref()?;
+        let last_bounds = self.last_bounds.as_ref()?;
+        let position = Position::new(line, col);
+        let offset = self.text.position_to_offset(&position);
+        let (_, _, pos) = self.line_and_position_for_offset(offset);
+        let pos = pos?;
+        // line_and_position_for_offset returns a position relative to text area origin
+        // with line_number_width already included in x.
+        // Add last_bounds.origin to convert to absolute screen coordinates.
+        Some(last_bounds.origin + pos)
+    }
+
+    /// Convert an absolute mouse position (in window coordinates) to a 0-based (line, col) Position.
+    ///
+    /// Returns `None` if the layout is not available.
+    /// This properly handles variable-width characters and scroll offset.
+    pub fn line_col_for_mouse_position(&self, position: Point<Pixels>) -> Option<Position> {
+        if self.text.len() == 0 {
+            return Some(Position::new(0, 0));
+        }
+        let _ = self.last_bounds.as_ref()?;
+        let _ = self.last_layout.as_ref()?;
+        let offset = self.index_for_mouse_position(position);
+        Some(self.text.offset_to_position(offset))
+    }
+
     /// Set (0-based) [`Position`] of the cursor.
     ///
     /// This will move the cursor to the specified line and column, and update the selection range.
