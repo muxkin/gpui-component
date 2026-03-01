@@ -117,6 +117,7 @@ impl InputState {
     }
 
     pub(super) fn left(&mut self, _: &MoveLeft, _: &mut Window, cx: &mut Context<Self>) {
+        if self.skip_builtin_key_handling.get() { cx.propagate(); return; }
         self.pause_blink_cursor(cx);
         if self.selected_range.is_empty() {
             self.move_to(self.previous_boundary(self.cursor()), None, cx);
@@ -126,6 +127,7 @@ impl InputState {
     }
 
     pub(super) fn right(&mut self, _: &MoveRight, _: &mut Window, cx: &mut Context<Self>) {
+        if self.skip_builtin_key_handling.get() { cx.propagate(); return; }
         self.pause_blink_cursor(cx);
         if self.selected_range.is_empty() {
             self.move_to(self.next_boundary(self.selected_range.end), None, cx);
@@ -135,6 +137,7 @@ impl InputState {
     }
 
     pub(super) fn up(&mut self, action: &MoveUp, window: &mut Window, cx: &mut Context<Self>) {
+        if self.skip_builtin_key_handling.get() { cx.propagate(); return; }
         if self.handle_action_for_context_menu(Box::new(action.clone()), window, cx) {
             return;
         }
@@ -155,6 +158,7 @@ impl InputState {
     }
 
     pub(super) fn down(&mut self, action: &MoveDown, window: &mut Window, cx: &mut Context<Self>) {
+        if self.skip_builtin_key_handling.get() { cx.propagate(); return; }
         if self.handle_action_for_context_menu(Box::new(action.clone()), window, cx) {
             return;
         }
@@ -207,12 +211,14 @@ impl InputState {
     }
 
     pub(super) fn home(&mut self, _: &MoveHome, _: &mut Window, cx: &mut Context<Self>) {
+        if self.skip_builtin_key_handling.get() { cx.propagate(); return; }
         self.pause_blink_cursor(cx);
         let offset = self.start_of_line();
         self.move_to(offset, Some(MoveDirection::Up), cx);
     }
 
     pub(super) fn end(&mut self, _: &MoveEnd, _: &mut Window, cx: &mut Context<Self>) {
+        if self.skip_builtin_key_handling.get() { cx.propagate(); return; }
         self.pause_blink_cursor(cx);
         let offset = self.end_of_line();
         self.move_to(offset, Some(MoveDirection::Down), cx);

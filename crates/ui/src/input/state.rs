@@ -16,6 +16,7 @@ use ropey::{Rope, RopeSlice};
 use serde::Deserialize;
 use std::ops::Range;
 use std::rc::Rc;
+use std::cell::Cell;
 use sum_tree::Bias;
 use unicode_segmentation::*;
 
@@ -398,6 +399,11 @@ pub struct InputState {
     /// start_line is the first HIDDEN line (the line after the fold indicator) and
     /// end_line is the last hidden line (inclusive). Lines in these ranges are not rendered.
     pub folded_ranges: Vec<Range<usize>>,
+
+    /// When true, built-in key action handlers (left/right/up/down/escape/backspace/delete/enter/home/end)
+    /// will call `cx.propagate()` instead of handling the event, allowing parent views to intercept.
+    /// Used by column/block edit mode in the host editor.
+    pub skip_builtin_key_handling: Rc<Cell<bool>>,
 }
 
 impl EventEmitter<InputEvent> for InputState {}
@@ -484,6 +490,7 @@ impl InputState {
             auto_pairs: false,
             foldable_ranges: Vec::new(),
             folded_ranges: Vec::new(),
+            skip_builtin_key_handling: Rc::new(Cell::new(false)),
         }
     }
 
@@ -1349,6 +1356,7 @@ impl InputState {
     }
 
     pub fn backspace(&mut self, _: &Backspace, window: &mut Window, cx: &mut Context<Self>) {
+        if self.skip_builtin_key_handling.get() { cx.propagate(); return; }
         if self.selected_range.is_empty() {
             self.select_to(self.previous_boundary(self.cursor()), cx)
         }
@@ -1357,6 +1365,7 @@ impl InputState {
     }
 
     pub fn delete(&mut self, _: &Delete, window: &mut Window, cx: &mut Context<Self>) {
+        if self.skip_builtin_key_handling.get() { cx.propagate(); return; }
         if self.selected_range.is_empty() {
             self.select_to(self.next_boundary(self.cursor()), cx)
         }
@@ -1459,6 +1468,7 @@ impl InputState {
     }
 
     pub(super) fn enter(&mut self, action: &Enter, window: &mut Window, cx: &mut Context<Self>) {
+        if self.skip_builtin_key_handling.get() { cx.propagate(); return; }
         if self.handle_action_for_context_menu(Box::new(action.clone()), window, cx) {
             return;
         }
@@ -1497,6 +1507,7 @@ impl InputState {
     }
 
     pub(super) fn escape(&mut self, action: &Escape, window: &mut Window, cx: &mut Context<Self>) {
+        if self.skip_builtin_key_handling.get() { cx.propagate(); return; }
         if self.handle_action_for_context_menu(Box::new(action.clone()), window, cx) {
             return;
         }
